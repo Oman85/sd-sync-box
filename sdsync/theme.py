@@ -268,7 +268,8 @@ pre.log{background:rgba(0,0,0,.6);color:var(--c4);text-shadow:0 0 6px rgba(57,25
 .tray{box-shadow:0 0 0 1px rgba(0,240,255,.4)!important;color:var(--c1)}
 .tray b{font:800 1.2em var(--head);color:var(--c3);text-shadow:0 0 10px var(--c3)}
 .desk{position:relative;z-index:1}
-.desk .panel{background:rgba(6,0,22,.55)}
+.desk .panel{background:rgba(6,0,22,.42)}
+.desk pre.log{background:rgba(0,0,0,.3)}
 .task{flex-wrap:wrap}
 .task button{font-size:.72em;letter-spacing:.08em;padding:6px 12px}
 .tray{min-width:0;overflow:hidden}
@@ -380,7 +381,87 @@ GLMATRIX_JS = r"""
 })();
 """
 
+# Flying between towers of data, in the spirit of the supercomputer scenes in
+# 90s hacker films. Original code: each tower is a translucent block whose faces
+# carry rows of data that scroll upward; the camera glides down an avenue
+# between them at street level, looking slightly up, and weaves side to side.
+GIBSON_JS = r"""
+(function(){
+ const c=document.getElementById('bg'); if(!c) return; const x=c.getContext('2d');
+ const COLS=[[0,220,255],[40,120,255],[150,90,255],[255,170,40],[230,240,255]];
+ const HEX='0123456789ABCDEF', NEAR=0.8, FAR=70, SPEED=0.09;
+ let W,H,t=0,last=0,camX=0,towers=[];
+ function size(){W=c.width=innerWidth;H=c.height=innerHeight}
+ const rows=n=>Array.from({length:n},()=>Array.from({length:12},()=>HEX[Math.random()*16|0]).join(''));
+ function tower(z){
+  const side=Math.random()<.5?-1:1, lane=1+(Math.random()*5|0);
+  const w=1.2+Math.random()*1.8, h=4+Math.pow(Math.random(),1.6)*26;
+  return {x0:side>0?lane*3.2-0.2:-lane*3.2-w+0.2, w:w, d:1.5+Math.random()*2.5, h:h, z:z,
+    col:COLS[Math.random()<.7?(Math.random()*2|0):(2+(Math.random()*3|0))],
+    rows:rows(40), speed:.3+Math.random()*1.2, off:Math.random()*40};
+ }
+ size(); addEventListener('resize',size);
+ for(let i=0;i<70;i++) towers.push(tower(NEAR+2+Math.random()*(FAR-NEAR)));
+ function P(X,Y,Z,f,cx,hy){return [cx+(X-camX)*f/Z, hy-(Y-1.0)*f/Z]}
+ function frame(now){
+  const cu=document.getElementById('curtain');
+  if(cu&&cu.classList.contains('on')){setTimeout(()=>requestAnimationFrame(frame),1000);return}
+  requestAnimationFrame(frame);
+  if(now-last<33) return;
+  if(last&&now-last>70&&towers.length>36) towers.length-=3;
+  last=now; t++;
+  const f=Math.min(W,H)*0.75, cx=W/2, hy=H*0.66;
+  camX=Math.sin(t*0.006)*1.6;
+  const g=x.createLinearGradient(0,0,0,H); g.addColorStop(0,'#000006'); g.addColorStop(.66,'#020822'); g.addColorStop(1,'#000');
+  x.fillStyle=g; x.fillRect(0,0,W,H);
+  // street grid
+  x.strokeStyle='rgba(0,200,255,.18)'; x.lineWidth=1; x.beginPath();
+  for(let i=-10;i<=10;i++){const a=P(i*3.2,0,NEAR,f,cx,hy),b=P(i*3.2,0,FAR,f,cx,hy);x.moveTo(a[0],a[1]);x.lineTo(b[0],b[1])}
+  for(let z=NEAR+(4-(t*SPEED)%4);z<FAR;z+=4){const a=P(-40,0,z,f,cx,hy),b=P(40,0,z,f,cx,hy);x.moveTo(a[0],a[1]);x.lineTo(b[0],b[1])}
+  x.stroke();
+  towers.sort((a,b)=>b.z-a.z);
+  x.textBaseline='top';
+  for(const tw of towers){
+   tw.z-=SPEED; if(tw.z<NEAR){Object.assign(tw,tower(FAR));continue}
+   const fog=Math.max(0,Math.min(1,(FAR-tw.z)/(FAR*0.6)));
+   const [r,gc,b]=tw.col, col=a=>`rgba(${r},${gc},${b},${a})`;
+   const x1=tw.x0+tw.w, zb=tw.z+tw.d;
+   const fl=P(tw.x0,0,tw.z,f,cx,hy), ft=P(x1,tw.h,tw.z,f,cx,hy);
+   // side face toward the street (a trapezoid)
+   const sx=(tw.x0>camX)?tw.x0:x1;
+   const s1=P(sx,0,tw.z,f,cx,hy), s2=P(sx,tw.h,tw.z,f,cx,hy), s3=P(sx,tw.h,zb,f,cx,hy), s4=P(sx,0,zb,f,cx,hy);
+   x.globalAlpha=fog;
+   x.fillStyle=col(.10); x.strokeStyle=col(.55);
+   x.beginPath();x.moveTo(s1[0],s1[1]);x.lineTo(s2[0],s2[1]);x.lineTo(s3[0],s3[1]);x.lineTo(s4[0],s4[1]);x.closePath();x.fill();x.stroke();
+   // front face with scrolling rows of data
+   const L=fl[0], R=ft[0], B=fl[1], T=ft[1], fw=R-L, fh=B-T;
+   if(R<0||L>W){x.globalAlpha=1;continue}
+   x.fillStyle=col(.16); x.fillRect(L,T,fw,fh);
+   x.shadowColor=col(1); x.shadowBlur=10; x.strokeStyle=col(.9); x.strokeRect(L,T,fw,fh); x.shadowBlur=0;
+   const rowH=(0.42*f)/tw.z;
+   if(rowH>=2.5){
+    x.save(); x.beginPath(); x.rect(L+1,T+1,fw-2,fh-2); x.clip();
+    const scroll=((t*tw.speed*0.05+tw.off)%1)*rowH, n=Math.ceil(fh/rowH)+1;
+    if(rowH>=7){x.font=Math.floor(rowH*0.85)+'px "DejaVu Sans Mono",monospace'}
+    for(let i=0;i<n;i++){
+     const y=B-(i+1)*rowH-scroll, row=tw.rows[(i+(t*tw.speed*0.05|0))%tw.rows.length];
+     const lit=((i*7+tw.off|0)%9===0);
+     x.fillStyle=col(lit?.95:.55);
+     if(rowH>=7) x.fillText(row,L+rowH*0.3,y);
+     else {for(let k=0;k<6;k++){if((k+i)%3) x.fillRect(L+fw*(0.06+k*0.15),y+rowH*0.3,fw*0.11,Math.max(1,rowH*0.35))}}
+    }
+    x.restore();
+   }
+   x.globalAlpha=1;
+  }
+ }
+ if(!matchMedia('(prefers-reduced-motion: reduce)').matches) requestAnimationFrame(frame);
+})();
+"""
+
+
 BACKGROUNDS = {
+    "gibson": ("Gibson: towers of data", "GIBSON_JS"),
     "glmatrix": ("3D falling code (xscreensaver GLMatrix style)", "GLMATRIX_JS"),
     "city": ("Data city fly-through", "CITY_JS"),
     "none": ("None", None),
@@ -388,5 +469,5 @@ BACKGROUNDS = {
 
 
 def background_js(name):
-    entry = BACKGROUNDS.get(name) or BACKGROUNDS["glmatrix"]
+    entry = BACKGROUNDS.get(name) or BACKGROUNDS["gibson"]
     return globals()[entry[1]] if entry[1] else ""

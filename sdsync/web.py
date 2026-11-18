@@ -155,11 +155,12 @@ document.getElementById('log').textContent=s.log.slice().reverse().join('\\n');}
 document.getElementById('clock').textContent='Offline';}}
 tick();setInterval(tick,1000);
 @@bg_js@@
+if(location.search.includes('bgonly'))document.querySelector('.desk').style.display='none';
 @@kiosk@@
 </script></body></html>"""
 
 
-def render(tpl, kiosk=False, look="cyber", background="glmatrix", **values):
+def render(tpl, kiosk=False, look="cyber", background="gibson", **values):
     cyber = look == "cyber"
     bg_js = theme.background_js(background) if cyber else ""
     out = (tpl.replace("@@css@@", theme.CSS).replace("@@theme_js@@", theme.JS)
@@ -308,7 +309,7 @@ def serve(service, host, port):
                             for p in cfg["playlists"])
                 host_name = os.uname().nodename
                 return self._send(200, render(
-                    SCREEN, kiosk, cfg.get('look', 'cyber'), cfg.get('background', 'glmatrix'), addr=esc(f"http://{host_name}.local"), targets_json=targets_json,
+                    SCREEN, kiosk, cfg.get('look', 'cyber'), cfg.get('background', 'gibson'), addr=esc(f"http://{host_name}.local"), targets_json=targets_json,
                     lib=f"{len(cfg['playlists'])} playlists · {songs} songs in library"))
             if path != "/":
                 return self._send(404, "Not found", "text/plain")
@@ -320,7 +321,7 @@ def serve(service, host, port):
             looks = "".join(
                 f"<option value='{v}'{' selected' if cfg.get('look', 'cyber') == v else ''}>{n}</option>"
                 for v, n in (("cyber", "Cyberspace (neon, hacker movie)"), ("classic", "Classic 90s desktop")))
-            cur_bg = cfg.get("background", "glmatrix")
+            cur_bg = cfg.get("background", "gibson")
             backgrounds = "".join(
                 f"<option value='{k}'{' selected' if k == cur_bg else ''}>{esc(v[0])}</option>"
                 for k, v in theme.BACKGROUNDS.items())
