@@ -149,9 +149,28 @@ def sync_playlist(pl, cfg, progress=None):
     if not missing:
         log.info("%s: up to date (%d songs)", album, len(tracks))
         return 0
+    copied = 0
 
     by_id = {t["id"]: t for t in tracks}
     done = []
+
+    # A song another playlist already downloaded is copied, not fetched again
+    # (sorted playlists made from liked songs share most of theirs).
+    for t in list(missing):
+        other = next(iter(glob.glob(os.path.join(config.CACHE_DIR, "*", t["id"] + ".mp3"))), None)
+        if not other:
+            continue
+        tmp = os.path.join(work, t["id"] + ".mp3")
+        shutil.copyfile(other, tmp)
+        tag_mp3(tmp, t.get("title") or t["id"], t.get("artist", ""), album)
+        os.replace(tmp, os.path.join(pdir, t["id"] + ".mp3"))
+        missing.remove(t)
+        failed.pop(t["id"], None)
+        copied += 1
+    if not missing:
+        _write_json(failed_path, failed)
+        log.info("%s: %d songs copied from other playlists", album, copied)
+        return copied
 
     def learn(info):
         """Fill in title and artist from YouTube for songs listed by ID only."""
@@ -214,8 +233,8 @@ def sync_playlist(pl, cfg, progress=None):
     shutil.rmtree(work, ignore_errors=True)
     if imported:   # keep the titles learned from YouTube for the drive file names
         _write_json(os.path.join(pdir, "order.json"), {"title": yt_title, "tracks": tracks})
-    log.info("%s: %d new songs", album, len(done))
-    return len(done)
+    log.info("%s: %d new songs", album, len(done) + copied)
+    return len(done) + copied
 
 
 def remove_orphans(cfg):

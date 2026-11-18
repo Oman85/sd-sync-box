@@ -76,6 +76,8 @@ def parse_csv(path, data):
         if library:
             t["title"] = (r[1] if len(r) > 1 else "").strip()
             t["artist"] = ", ".join(a.strip() for a in r[3:6] if a.strip())
+            t["album"] = (r[2] if len(r) > 2 else "").strip()
+            t["main_artist"] = (r[3] if len(r) > 3 else "").strip()
         tracks.append(t)
     if not tracks:
         return None

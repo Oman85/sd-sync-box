@@ -160,6 +160,21 @@ The box then downloads those songs by video ID like any other playlist. Songs th
 deleted from YouTube are skipped. An imported list doesn't follow changes on YouTube:
 export and upload again later, and playlists with the same name get their new song list.
 
+### Sorting liked songs into playlists
+
+Next to an imported playlist, **Sort into playlists** opens a page that:
+
+- looks up each song's genre on MusicBrainz (musicbrainz.org, free). It uses the album's
+  genre, or the artist's if the album isn't found. The first run takes about 10 to 30 minutes
+  for 1,700 songs, and answers are remembered for next time;
+- lists genres with their song counts. Small genres are merged into "Other genres".
+  Tick the ones you want, rename them, pick a drive and press **Make playlists**;
+- lists every song with a search box, so you can tick songs and add them to a playlist
+  (or take them out) by hand.
+
+Songs already downloaded for another playlist are copied, not downloaded again. Once
+everything is sorted, take *Liked & library songs* off the drive so songs don't appear twice.
+
 ## How the drives are laid out
 
 ```

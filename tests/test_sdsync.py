@@ -234,7 +234,8 @@ def test_takeout_parse(env):
     found = takeout.parse("takeout.zip", _takeout_zip())
     assert [(p["name"], len(p["tracks"])) for p in found] == [
         ("Liked & library songs", 1), ("Jízdaá", 1), ("Road Trip", 2)]
-    assert found[0]["tracks"][0] == {"id": "ddddddddddd", "title": "Song D", "artist": "Band, Guest"}
+    assert found[0]["tracks"][0] == {"id": "ddddddddddd", "title": "Song D", "artist": "Band, Guest",
+                                    "album": "Album", "main_artist": "Band"}
     one = takeout.parse("Road Trip-videos.csv", b"Video ID,Time\nbbbbbbbbbbb,1\n")
     assert one[0]["name"] == "Road Trip"
     with pytest.raises(ValueError):
@@ -305,3 +306,76 @@ def test_takeout_web_flow(env, monkeypatch):
     cfg = config.load()
     rt = next(p for p in cfg["playlists"] if p["name"] == "Road Trip")
     assert len(cfg["playlists"]) == 2 and takeout.load_tracks(rt["id"]) == [{"id": "zzzzzzzzzzz"}]
+
+
+def test_genre_sort(env, monkeypatch):
+    from sdsync import config, genres, sorter, takeout, web
+    tracks = [{"id": f"song{i:07d}", "title": f"S{i}", "artist": a, "main_artist": a, "album": al}
+              for i, (a, al) in enumerate([("Goldie", "Timeless")] * 3 + [("Aphex Twin", "SAW")] * 2
+                                          + [("Nobody", "")] + [("Polka Man", "Polkas")])]
+    takeout.save_tracks("liked", tracks)
+    cfg = config.load()
+    cfg["playlists"] = [{"id": "liked", "url": "", "name": "Liked", "source": "takeout", "enabled": True}]
+    config.save(cfg)
+
+    asked = []
+
+    def fetch(url):
+        asked.append(url)
+        if "genre/all" in url:
+            return "drum and bass\nambient\npolka\n"
+        if "release-group" in url and "Timeless" in url:
+            return json.dumps({"release-groups": [{"score": 100, "tags": [
+                {"name": "seen live", "count": 9}, {"name": "drum and bass", "count": 5}, {"name": "jungle", "count": 2}]}]})
+        if "release-group" in url and "Polkas" in url:
+            return json.dumps({"release-groups": [{"score": 100, "tags": [{"name": "polka", "count": 1}]}]})
+        if "release-group" in url:
+            return json.dumps({"release-groups": [{"score": 40, "tags": [{"name": "polka", "count": 3}]}]})
+        if "Aphex" in url:
+            return json.dumps({"artists": [{"score": 100, "tags": [{"name": "ambient", "count": 4}]}]})
+        return json.dumps({"artists": []})
+
+    mb = genres.MusicBrainz(fetch, delay=0)
+    res = genres.lookup(tracks, mb)
+    assert res["song0000000"] == "Drum and Bass" and res["song0000003"] == "Ambient"
+    assert res["song0000005"] == "" and res["song0000006"] == "Polka"
+    n = len(asked)
+    genres.lookup(tracks, genres.MusicBrainz(fetch, delay=0))
+    assert len(asked) == n   # all answers come from the cache
+    genres._save(genres.results_path("liked"), res)
+
+    groups = genres.summary(res, tracks, min_songs=2)
+    assert [(g, len(ids)) for g, ids in groups] == [
+        ("Drum and Bass", 3), ("Ambient", 2), ("Other genres", 1), ("Unknown genre", 1)]
+    html = web._sort_page(config.load(), "liked", 2, False, web._add_targets(cfg))
+    assert "Drum and Bass" in html and "Make playlists" in html
+
+    web._sort_post("/sort/make", {"from": "liked", "min": "2", "to": "sd", "g_0": "1", "n_0": "DnB", "g_1": "1"}, {})
+    cfg = config.load()
+    kids = sorter.children(cfg, "liked")
+    assert [k["name"] for k in kids] == ["DnB", "Ambient"]
+    assert len(takeout.load_tracks(kids[0]["id"])) == 3
+    assert len(config.target(cfg, "sd")["folders"]) == 2
+    # Sorted songs drop out of the genre list; the rest can be moved by hand.
+    assert [g for g, _ in genres.summary(res, tracks, sorter.membership(cfg, "liked"), 1)] == ["Polka", "Unknown genre"]
+    web._sort_post("/sort/songs", {"from": "liked", "op": "add", "dest": kids[0]["id"]}, {"v": ["song0000005"]})
+    assert len(takeout.load_tracks(kids[0]["id"])) == 4
+    web._sort_post("/sort/songs", {"from": "liked", "op": "remove", "dest": kids[0]["id"]}, {"v": ["song0000005"]})
+    assert len(takeout.load_tracks(kids[0]["id"])) == 3
+
+
+def test_song_already_downloaded_is_copied(env, monkeypatch):
+    import types
+    cardsync, cfg, card, make_playlist = env
+    from sdsync import downloader, takeout
+    make_playlist("liked", "Liked", ["song0000001"])
+    takeout.save_tracks("kid", [{"id": "song0000001", "title": "S", "artist": "A"}])
+    monkeypatch.setattr(downloader, "tag_mp3", lambda *a: None)
+
+    class NoYDL:
+        def __init__(self, opts):
+            raise AssertionError("must not download again")
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=NoYDL))
+    pl = {"id": "kid", "url": "", "name": "Kid", "source": "takeout", "enabled": True}
+    assert downloader.sync_playlist(pl, cfg) == 1
+    assert os.path.exists(os.path.join(downloader.playlist_dir("kid"), "song0000001.mp3"))
