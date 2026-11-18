@@ -160,6 +160,22 @@ The box then downloads those songs by video ID like any other playlist. Songs th
 deleted from YouTube are skipped. An imported list doesn't follow changes on YouTube:
 export and upload again later, and playlists with the same name get their new song list.
 
+### One-time: put liked songs into genre playlists on YouTube
+
+`tools/takeout_to_youtube.py` does the same genre sorting and writes the result to your
+YouTube account as unlisted playlists, which the box (or anyone with the link) can then
+read normally. Run it on any computer with Python 3 and a browser:
+
+    python3 tools/takeout_to_youtube.py genres takeout.zip   # writes genres.csv, 10-30 min
+    # optional: fix genres in genres.csv with a spreadsheet; empty genre = left out
+    pip install google-api-python-client google-auth-oauthlib
+    python3 tools/takeout_to_youtube.py --help-setup          # one-time Google Cloud key
+    python3 tools/takeout_to_youtube.py upload genres.csv
+
+YouTube's free API quota allows about 190 songs a day, so 1,700 songs take about 9 days.
+Leave `upload` running and it waits for the quota to reset each night, or run it again
+later and it carries on where it stopped.
+
 ### Sorting liked songs into playlists
 
 Next to an imported playlist, **Sort into playlists** opens a page that:

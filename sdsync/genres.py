@@ -127,6 +127,7 @@ def lookup(tracks, mb=None, progress=None, stop=None):
     mb = mb or MusicBrainz()
     cache = _load(CACHE, {})
     out = {}
+    errors = 0
     for n, t in enumerate(tracks, 1):
         if stop is not None and stop.is_set():
             break
@@ -144,8 +145,13 @@ def lookup(tracks, mb=None, progress=None, stop=None):
                 if key not in cache:
                     cache[key] = mb.artist(artist)
                 tags = cache[key]
+            errors = 0
         except Exception as e:  # network trouble: leave this song unknown, try again next run
             log.warning("genre lookup failed for %s: %s", artist, e)
+            errors += 1
+            if errors >= 5:
+                _save(CACHE, cache)
+                raise RuntimeError(f"can't reach MusicBrainz ({e}). Check the internet connection and try again.")
         out[t["id"]] = pretty(tags[0]) if tags else ""
         if n % 20 == 0:
             _save(CACHE, cache)

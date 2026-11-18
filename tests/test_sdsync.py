@@ -379,3 +379,46 @@ def test_song_already_downloaded_is_copied(env, monkeypatch):
     pl = {"id": "kid", "url": "", "name": "Kid", "source": "takeout", "enabled": True}
     assert downloader.sync_playlist(pl, cfg) == 1
     assert os.path.exists(os.path.join(downloader.playlist_dir("kid"), "song0000001.mp3"))
+
+
+def test_takeout_to_youtube_resumes_after_quota(env, tmp_path, monkeypatch):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "t2y", os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools", "takeout_to_youtube.py"))
+    t2y = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(t2y)
+    csvp = tmp_path / "genres.csv"
+    csvp.write_text("video_id,artist,title,album,genre\n"
+                    "aaaaaaaaaaa,A,1,,Jungle\nbbbbbbbbbbb,B,2,,Jungle\nccccccccccc,C,3,,Ambient\n"
+                    "ddddddddddd,D,4,,\nnot-an-id,E,5,,Jungle\n")
+    groups = t2y.plan(str(csvp))
+    assert groups == {"Jungle": ["aaaaaaaaaaa", "bbbbbbbbbbb"], "Ambient": ["ccccccccccc"]}
+
+    calls = []
+
+    class Req:
+        def __init__(self, kind, body):
+            self.kind, self.body = kind, body
+
+        def execute(self):
+            if len(calls) == 3:
+                calls.append("quota")
+                raise t2y.QuotaExceeded()
+            calls.append((self.kind, self.body["snippet"].get("title") or self.body["snippet"]["resourceId"]["videoId"]))
+            return {"id": "PL" + self.body["snippet"].get("title", "x")}
+
+    class YT:
+        def playlists(self):
+            return type("P", (), {"insert": lambda s, part, body: Req("pl", body)})()
+
+        def playlistItems(self):
+            return type("I", (), {"insert": lambda s, part, body: Req("item", body)})()
+
+    state = {"playlists": {}, "done": {}}
+    with pytest.raises(t2y.QuotaExceeded):
+        t2y.upload(YT(), groups, state, lambda: None, log=lambda *a: None)
+    assert state["done"] == {"Jungle": ["aaaaaaaaaaa", "bbbbbbbbbbb"]}
+    t2y.upload(YT(), groups, state, lambda: None, log=lambda *a: None)
+    assert calls[-2:] == [("pl", "Ambient"), ("item", "ccccccccccc")]
+    assert [c for c in calls if c != "quota" and c[0] == "pl"] == [("pl", "Jungle"), ("pl", "Ambient")]
+    assert 0 < t2y._seconds_to_quota_reset() <= 86400 + 600
