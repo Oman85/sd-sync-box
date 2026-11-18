@@ -1,0 +1,27 @@
+[Unit]
+Description=SD Sync Box big screen (full-screen progress on the attached monitor)
+After=sdsync.service systemd-user-sessions.service
+Wants=sdsync.service
+Conflicts=getty@tty1.service
+
+[Service]
+User=sdsync-screen
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+Environment=XDG_SESSION_TYPE=wayland
+# Wait for the web page, then show it full screen with no browser bars.
+ExecStartPre=/bin/sh -c 'until curl -s -o /dev/null http://127.0.0.1:80/api/status; do sleep 1; done'
+ExecStart=/usr/bin/cage -d -s -- /usr/bin/chromium --kiosk --incognito --noerrdialogs --disable-infobars \
+  --no-first-run --disable-session-crashed-bubble --disable-features=Translate --ozone-platform=wayland \
+  --disable-pinch --overscroll-history-navigation=0 --touch-events=enabled \
+  --check-for-update-interval=31536000 http://127.0.0.1:80/screen
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

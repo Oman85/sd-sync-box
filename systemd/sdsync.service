@@ -1,0 +1,17 @@
+[Unit]
+Description=SD Sync Box (YouTube playlists to SD card)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Root is needed to mount the card and use port 80.
+ExecStart=/opt/sdsync/venv/bin/python -m sdsync
+WorkingDirectory=/opt/sdsync
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/opt/sdsync/venv/bin:/usr/local/bin:/usr/bin:/bin
+Restart=always
+RestartSec=10
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

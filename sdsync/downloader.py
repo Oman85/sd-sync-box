@@ -1,0 +1,206 @@
+"""Download YouTube playlists into the local MP3 cache on the Pi.
+
+Cache layout, one folder per playlist:
+    cache/<playlist id>/order.json   playlist order and tags, refreshed every run
+    cache/<playlist id>/<video>.mp3  finished, tagged songs
+    cache/<playlist id>/work/        in-progress downloads (never copied to a card)
+
+Only finished files are moved into the playlist folder, so a card can be
+written while a download is still running.
+"""
+import glob
+import json
+import logging
+import os
+import shutil
+import time
+
+from . import config, names
+
+log = logging.getLogger("sdsync.download")
+
+RETRY_FAILED_AFTER = 7 * 24 * 3600  # deleted/blocked videos are retried weekly
+
+
+def playlist_dir(pid):
+    return os.path.join(config.CACHE_DIR, pid)
+
+
+def read_order(pid):
+    try:
+        with open(os.path.join(playlist_dir(pid), "order.json"), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {"title": "", "tracks": []}
+
+
+def _write_json(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1)
+    os.replace(tmp, path)
+
+
+def _base_opts(cfg):
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "ignoreerrors": True,
+        "retries": 5,
+        "socket_timeout": 30,
+        "logger": logging.getLogger("sdsync.yt-dlp"),
+    }
+    if cfg.get("cookies_file"):
+        opts["cookiefile"] = cfg["cookies_file"]
+    return opts
+
+
+def video_url(vid):
+    return f"https://www.youtube.com/watch?v={vid}"
+
+
+def fetch_listing(url, cfg):
+    """Return (playlist title, [ {id, title, artist} ... ]) in playlist order."""
+    import yt_dlp
+
+    opts = _base_opts(cfg) | {"extract_flat": "in_playlist", "skip_download": True}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    if not info:
+        raise RuntimeError("YouTube returned nothing for this link (private playlist or bad URL?)")
+    entries = info.get("entries")
+    if entries is None:  # a single video link
+        entries = [info]
+    tracks, seen = [], set()
+    for e in entries:
+        if not e or not e.get("id") or e["id"] in seen:
+            continue
+        title = e.get("title") or ""
+        if title in ("[Private video]", "[Deleted video]"):
+            continue
+        seen.add(e["id"])
+        artist, song = names.split_artist_title(title, e.get("channel") or e.get("uploader") or "")
+        tracks.append({"id": e["id"], "title": song or e["id"], "artist": artist})
+    return names.clean_text(info.get("title") or ""), tracks
+
+
+def tag_mp3(path, title, artist, album):
+    """ID3v2.3 plus ID3v1, no cover art: the safest combination for older head units."""
+    from mutagen.id3 import ID3, TALB, TIT2, TPE1, ID3NoHeaderError
+
+    try:
+        tags = ID3(path)
+        tags.delete(path)
+    except ID3NoHeaderError:
+        pass
+    tags = ID3()
+    tags.add(TIT2(encoding=0, text=title[:120]))
+    if artist:
+        tags.add(TPE1(encoding=0, text=artist[:120]))
+    if album:
+        tags.add(TALB(encoding=0, text=album[:120]))
+    tags.save(path, v1=2, v2_version=3)
+
+
+def sync_playlist(pl, cfg, progress=None):
+    """Bring one playlist's cache up to date. Returns number of new songs.
+
+    progress(text, done, total, song_fraction) is called as songs download.
+    """
+    import yt_dlp
+
+    pid = pl["id"]
+    pdir = playlist_dir(pid)
+    work = os.path.join(pdir, "work")
+    os.makedirs(work, exist_ok=True)
+
+    yt_title, tracks = fetch_listing(pl["url"], cfg)
+    album = names.clean_text(pl.get("name") or yt_title) or "Playlist"
+    _write_json(os.path.join(pdir, "order.json"), {"title": yt_title, "tracks": tracks})
+
+    # Drop songs that were removed from the playlist.
+    wanted = {t["id"] for t in tracks}
+    for f in glob.glob(os.path.join(pdir, "*.mp3")):
+        if os.path.basename(f)[:-4] not in wanted:
+            os.remove(f)
+
+    failed_path = os.path.join(pdir, "failed.json")
+    try:
+        with open(failed_path) as f:
+            failed = json.load(f)
+    except (OSError, ValueError):
+        failed = {}
+    now = time.time()
+    missing = [
+        t for t in tracks
+        if not os.path.exists(os.path.join(pdir, t["id"] + ".mp3"))
+        and now - failed.get(t["id"], 0) > RETRY_FAILED_AFTER
+    ]
+    if not missing:
+        log.info("%s: up to date (%d songs)", album, len(tracks))
+        return 0
+
+    by_id = {t["id"]: t for t in tracks}
+    done = []
+
+    def post_hook(filepath):
+        vid = os.path.splitext(os.path.basename(filepath))[0]
+        t = by_id.get(vid)
+        if not t or not filepath.endswith(".mp3"):
+            return
+        tag_mp3(filepath, t["title"], t["artist"], album)
+        os.replace(filepath, os.path.join(pdir, vid + ".mp3"))
+        done.append(vid)
+        if progress:
+            progress(f"{album}", len(done), len(missing), 0.0)
+
+    def progress_hook(d):
+        if not progress or d.get("status") != "downloading":
+            return
+        total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+        frac = (d.get("downloaded_bytes") or 0) / total if total else 0.0
+        t = by_id.get((d.get("info_dict") or {}).get("id"), {})
+        song = f"{t.get('artist', '')} - {t.get('title', '')}".strip(" -")
+        progress(f"{album}: {song}", len(done), len(missing), min(frac, 1.0))
+
+    opts = _base_opts(cfg) | {
+        "format": "bestaudio/best",
+        "outtmpl": os.path.join(work, "%(id)s.%(ext)s"),
+        "noplaylist": True,
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": str(cfg["bitrate_kbps"]),
+        }],
+        # CBR, 44.1 kHz, stereo.
+        "postprocessor_args": {"extractaudio": ["-ar", "44100", "-ac", "2"]},
+        "post_hooks": [post_hook],
+        "progress_hooks": [progress_hook],
+    }
+    log.info("%s: downloading %d new songs", album, len(missing))
+    if progress:
+        progress(album, 0, len(missing), 0.0)
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        ydl.download([video_url(t["id"]) for t in missing])
+
+    for t in missing:
+        if t["id"] not in done:
+            failed[t["id"]] = now
+            log.warning("%s: could not download %s (%s)", album, t["title"], t["id"])
+    for vid in done:
+        failed.pop(vid, None)
+    _write_json(failed_path, failed)
+    shutil.rmtree(work, ignore_errors=True)
+    log.info("%s: %d new songs", album, len(done))
+    return len(done)
+
+
+def remove_orphans(cfg):
+    """Delete cache folders of playlists that were removed from the config."""
+    keep = {p["id"] for p in cfg["playlists"]}
+    if not os.path.isdir(config.CACHE_DIR):
+        return
+    for d in os.listdir(config.CACHE_DIR):
+        if d not in keep:
+            shutil.rmtree(os.path.join(config.CACHE_DIR, d), ignore_errors=True)
