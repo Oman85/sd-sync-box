@@ -91,7 +91,15 @@ folders, and each folder takes its songs from **one or more playlists**, played 
 ### The look
 Two looks, switched under **Settings > Look**:
 - **Cyberspace** (default): neon magenta, cyan and yellow on black like the computer screens in
-  90s hacker films, with an animated fly-through of glowing data towers behind the monitor view.
+  90s hacker films, with an animated background behind the monitor view. Pick it under
+  *Settings > Monitor background*:
+  - **Gibson: towers of data** (default), a slow glide down an avenue of tall see-through towers
+    with data scrolling up their faces, like the supercomputer in the film. Open
+    `http://sdsync.local/screen?bgonly` to see it without the windows.
+  - **3D falling code**, in the style of xscreensaver's *GLMatrix* hack by Jamie Zawinski
+    (redrawn from scratch for the browser; it doesn't need xscreensaver installed)
+  - **Data city fly-through**, glowing towers of data
+  - **None**
 - **Classic 90s desktop**: grey bevelled windows and navy title bars on a black desktop.
 
 Both have the same buttons, touch keyboard and message boxes.

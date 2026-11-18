@@ -70,7 +70,7 @@ if [ "$SCREEN" = 1 ]; then
     echo "Chromium isn't available as a normal package here (Ubuntu ships it as a snap)."
     echo "The big screen needs Debian 12/13 or Raspberry Pi OS. Skipping it."
   else
-    apt-get install -y cage chromium curl fonts-dejavu-core
+    apt-get install -y cage chromium curl fonts-dejavu-core fonts-ipafont-gothic
     # Monitor standby when idle. Without wlopm the screen just goes black instead.
     apt-get install -y wlopm || echo "wlopm not available; the idle screen will black out instead of switching off."
     id sdsync-screen >/dev/null 2>&1 || useradd -m -s /usr/sbin/nologin sdsync-screen

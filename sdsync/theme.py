@@ -212,7 +212,7 @@ a{color:var(--c1)}
 b{color:#fff}
 
 .panel{background:var(--face);box-shadow:0 0 0 1px var(--c1),0 0 22px rgba(0,240,255,.25),inset 0 0 30px rgba(122,0,255,.18);
-  padding:0;backdrop-filter:blur(2px)}
+  padding:0}
 .panel>h2{font:800 13px/1 var(--head);letter-spacing:.28em;text-transform:uppercase;color:#000;min-height:30px;
   padding:6px 10px;background:linear-gradient(100deg,var(--c2),var(--c5) 45%,var(--c1));
   text-shadow:none;box-shadow:0 0 18px rgba(255,0,212,.55)}
@@ -268,7 +268,8 @@ pre.log{background:rgba(0,0,0,.6);color:var(--c4);text-shadow:0 0 6px rgba(57,25
 .tray{box-shadow:0 0 0 1px rgba(0,240,255,.4)!important;color:var(--c1)}
 .tray b{font:800 1.2em var(--head);color:var(--c3);text-shadow:0 0 10px var(--c3)}
 .desk{position:relative;z-index:1}
-.desk .panel{background:rgba(6,0,22,.55)}
+.desk .panel{background:rgba(6,0,22,.42)}
+.desk pre.log{background:rgba(0,0,0,.3)}
 .task{flex-wrap:wrap}
 .task button{font-size:.72em;letter-spacing:.08em;padding:6px 12px}
 .tray{min-width:0;overflow:hidden}
@@ -277,14 +278,14 @@ pre.log{background:rgba(0,0,0,.6);color:var(--c4);text-shadow:0 0 6px rgba(57,25
 .menu a u{text-decoration:none;color:var(--c3)}
 .logo{font:800 22px var(--head);letter-spacing:.3em;color:#fff;
   text-shadow:-2px 0 var(--c2),2px 0 var(--c1),0 0 18px rgba(255,0,212,.6)}
-#city{position:fixed;inset:0;z-index:0;width:100%;height:100%}
+#bg{position:fixed;inset:0;z-index:0;width:100%;height:100%}
 @media (prefers-reduced-motion:reduce){.bar::after,.dev.unassigned{animation:none}}
 """
 
 # A fly-through of an endless city of glowing data towers, drawn on a canvas.
 CITY_JS = r"""
 (function(){
- const c=document.getElementById('city'); if(!c) return; const x=c.getContext('2d');
+ const c=document.getElementById('bg'); if(!c) return; const x=c.getContext('2d');
  const cols=['#00f0ff','#ff00d4','#f6ff00','#39ff14','#7a00ff'], G='0123456789ABCDEF';
  let W,H,towers=[],t=0; const FAR=60, SPEED=0.06;
  function size(){W=c.width=innerWidth;H=c.height=innerHeight}
@@ -318,3 +319,155 @@ CITY_JS = r"""
  if(!matchMedia('(prefers-reduced-motion: reduce)').matches) frame();
 })();
 """
+
+
+# 3D falling code, in the spirit of the "GLMatrix" hack from xscreensaver
+# (by Jamie Zawinski). Written from scratch for a 2D canvas: strips of glyphs
+# hang at different depths, a bright head drops down each one, the tail fades
+# behind it, glyphs flicker, and the view slowly drifts forward and sways.
+GLMATRIX_JS = r"""
+(function(){
+ const c=document.getElementById('bg'); if(!c) return; const x=c.getContext('2d');
+ const G='ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789Z:.=*+-<>¦|';
+ const pick=()=>G[Math.random()*G.length|0];
+ const NEAR=1.2, FAR=42, N=110, LEN=30;
+ let W,H,strips=[],t=0,last=0;
+ function size(){W=c.width=innerWidth;H=c.height=innerHeight}
+ function strip(z){
+  const s={x:(Math.random()-.5)*34,y:6+Math.random()*10,z:z,len:LEN,head:-Math.random()*LEN|0,
+    speed:.12+Math.random()*.25,acc:0,erase:Math.random()<.35,glyphs:[]};
+  for(let i=0;i<LEN;i++)s.glyphs.push(pick()); return s;
+ }
+ size(); addEventListener('resize',size);
+ for(let i=0;i<N;i++) strips.push(strip(NEAR+Math.random()*(FAR-NEAR)));
+ function frame(now){
+  const cu=document.getElementById('curtain');
+  if(cu&&cu.classList.contains('on')){setTimeout(()=>requestAnimationFrame(frame),1000);return}
+  requestAnimationFrame(frame);
+  if(now-last<33) return;
+  // slow machine? draw fewer strips (keeps the monitor smooth on old PCs)
+  if(last&&now-last>70&&strips.length>40) strips.length-=4;
+  last=now; t++;                                // ~30 fps is plenty
+  x.fillStyle='#000'; x.fillRect(0,0,W,H);
+  const f=Math.min(W,H)*0.9, cx=W/2, cy=H/2;
+  const sway=Math.sin(t*0.004)*0.35, bob=Math.sin(t*0.003)*1.2;
+  const cs=Math.cos(sway), sn=Math.sin(sway);
+  strips.sort((a,b)=>b.z-a.z);
+  x.textAlign='center'; x.textBaseline='middle'; let curFs=0;
+  for(const s of strips){
+   s.z-=0.035;                                      // drift toward the viewer
+   s.acc+=s.speed; while(s.acc>=1){s.acc-=1;s.head++}
+   if(s.head>s.len+LEN){s.head=0;if(s.erase){s.glyphs=s.glyphs.map(pick)}}
+   if(Math.random()<.08) s.glyphs[Math.random()*s.len|0]=pick();
+   // rotate the strip around the vertical axis for the slow sway
+   const X=s.x*cs-s.z*sn*0.15, Z=s.z+s.x*sn*0.15;
+   if(Z<NEAR){Object.assign(s,strip(FAR));continue}
+   const k=f/Z, sx=cx+X*k; if(sx<-50||sx>W+50) continue;
+   const fs=Math.round(k*0.95); if(fs<5) continue;
+   const fog=Math.max(0,Math.min(1,(FAR-Z)/(FAR*0.75)));
+   if(fs!==curFs){curFs=fs;x.font=fs+'px "IPAGothic","Noto Sans Mono CJK JP","VL Gothic","DejaVu Sans Mono",monospace'}
+   for(let i=0;i<s.len;i++){
+    const age=s.head-i; if(age<0||age>LEN) continue;   // above the head: not drawn yet
+    const sy=cy+(s.y-bob-i*1.0)*-k;
+    if(sy<-fs||sy>H+fs) continue;
+    const a=fog*(age===0?1:Math.max(0,1-age/LEN)*0.85);
+    if(a<0.03) continue;
+    x.fillStyle=age===0?`rgba(220,255,230,${a})`:`rgba(0,${150+((i*37)%90)},${40+((i*13)%40)},${a})`;
+    x.fillText(s.glyphs[i],sx,sy);
+   }
+  }
+ }
+ if(!matchMedia('(prefers-reduced-motion: reduce)').matches) requestAnimationFrame(frame);
+})();
+"""
+
+# Flying between towers of data, in the spirit of the supercomputer scenes in
+# 90s hacker films. Original code: each tower is a translucent block whose faces
+# carry rows of data that scroll upward; the camera glides down an avenue
+# between them at street level, looking slightly up, and weaves side to side.
+GIBSON_JS = r"""
+(function(){
+ const c=document.getElementById('bg'); if(!c) return; const x=c.getContext('2d');
+ const COLS=[[0,220,255],[40,120,255],[150,90,255],[255,170,40],[230,240,255]];
+ const HEX='0123456789ABCDEF', NEAR=0.8, FAR=70, SPEED=0.09;
+ let W,H,t=0,last=0,camX=0,towers=[];
+ function size(){W=c.width=innerWidth;H=c.height=innerHeight}
+ const rows=n=>Array.from({length:n},()=>Array.from({length:12},()=>HEX[Math.random()*16|0]).join(''));
+ function tower(z){
+  const side=Math.random()<.5?-1:1, lane=1+(Math.random()*5|0);
+  const w=1.2+Math.random()*1.8, h=4+Math.pow(Math.random(),1.6)*26;
+  return {x0:side>0?lane*3.2-0.2:-lane*3.2-w+0.2, w:w, d:1.5+Math.random()*2.5, h:h, z:z,
+    col:COLS[Math.random()<.7?(Math.random()*2|0):(2+(Math.random()*3|0))],
+    rows:rows(40), speed:.3+Math.random()*1.2, off:Math.random()*40};
+ }
+ size(); addEventListener('resize',size);
+ for(let i=0;i<70;i++) towers.push(tower(NEAR+2+Math.random()*(FAR-NEAR)));
+ function P(X,Y,Z,f,cx,hy){return [cx+(X-camX)*f/Z, hy-(Y-1.0)*f/Z]}
+ function frame(now){
+  const cu=document.getElementById('curtain');
+  if(cu&&cu.classList.contains('on')){setTimeout(()=>requestAnimationFrame(frame),1000);return}
+  requestAnimationFrame(frame);
+  if(now-last<33) return;
+  if(last&&now-last>70&&towers.length>36) towers.length-=3;
+  last=now; t++;
+  const f=Math.min(W,H)*0.75, cx=W/2, hy=H*0.66;
+  camX=Math.sin(t*0.006)*1.6;
+  const g=x.createLinearGradient(0,0,0,H); g.addColorStop(0,'#000006'); g.addColorStop(.66,'#020822'); g.addColorStop(1,'#000');
+  x.fillStyle=g; x.fillRect(0,0,W,H);
+  // street grid
+  x.strokeStyle='rgba(0,200,255,.18)'; x.lineWidth=1; x.beginPath();
+  for(let i=-10;i<=10;i++){const a=P(i*3.2,0,NEAR,f,cx,hy),b=P(i*3.2,0,FAR,f,cx,hy);x.moveTo(a[0],a[1]);x.lineTo(b[0],b[1])}
+  for(let z=NEAR+(4-(t*SPEED)%4);z<FAR;z+=4){const a=P(-40,0,z,f,cx,hy),b=P(40,0,z,f,cx,hy);x.moveTo(a[0],a[1]);x.lineTo(b[0],b[1])}
+  x.stroke();
+  towers.sort((a,b)=>b.z-a.z);
+  x.textBaseline='top';
+  for(const tw of towers){
+   tw.z-=SPEED; if(tw.z<NEAR){Object.assign(tw,tower(FAR));continue}
+   const fog=Math.max(0,Math.min(1,(FAR-tw.z)/(FAR*0.6)));
+   const [r,gc,b]=tw.col, col=a=>`rgba(${r},${gc},${b},${a})`;
+   const x1=tw.x0+tw.w, zb=tw.z+tw.d;
+   const fl=P(tw.x0,0,tw.z,f,cx,hy), ft=P(x1,tw.h,tw.z,f,cx,hy);
+   // side face toward the street (a trapezoid)
+   const sx=(tw.x0>camX)?tw.x0:x1;
+   const s1=P(sx,0,tw.z,f,cx,hy), s2=P(sx,tw.h,tw.z,f,cx,hy), s3=P(sx,tw.h,zb,f,cx,hy), s4=P(sx,0,zb,f,cx,hy);
+   x.globalAlpha=fog;
+   x.fillStyle=col(.10); x.strokeStyle=col(.55);
+   x.beginPath();x.moveTo(s1[0],s1[1]);x.lineTo(s2[0],s2[1]);x.lineTo(s3[0],s3[1]);x.lineTo(s4[0],s4[1]);x.closePath();x.fill();x.stroke();
+   // front face with scrolling rows of data
+   const L=fl[0], R=ft[0], B=fl[1], T=ft[1], fw=R-L, fh=B-T;
+   if(R<0||L>W){x.globalAlpha=1;continue}
+   x.fillStyle=col(.16); x.fillRect(L,T,fw,fh);
+   x.shadowColor=col(1); x.shadowBlur=10; x.strokeStyle=col(.9); x.strokeRect(L,T,fw,fh); x.shadowBlur=0;
+   const rowH=(0.42*f)/tw.z;
+   if(rowH>=2.5){
+    x.save(); x.beginPath(); x.rect(L+1,T+1,fw-2,fh-2); x.clip();
+    const scroll=((t*tw.speed*0.05+tw.off)%1)*rowH, n=Math.ceil(fh/rowH)+1;
+    if(rowH>=7){x.font=Math.floor(rowH*0.85)+'px "DejaVu Sans Mono",monospace'}
+    for(let i=0;i<n;i++){
+     const y=B-(i+1)*rowH-scroll, row=tw.rows[(i+(t*tw.speed*0.05|0))%tw.rows.length];
+     const lit=((i*7+tw.off|0)%9===0);
+     x.fillStyle=col(lit?.95:.55);
+     if(rowH>=7) x.fillText(row,L+rowH*0.3,y);
+     else {for(let k=0;k<6;k++){if((k+i)%3) x.fillRect(L+fw*(0.06+k*0.15),y+rowH*0.3,fw*0.11,Math.max(1,rowH*0.35))}}
+    }
+    x.restore();
+   }
+   x.globalAlpha=1;
+  }
+ }
+ if(!matchMedia('(prefers-reduced-motion: reduce)').matches) requestAnimationFrame(frame);
+})();
+"""
+
+
+BACKGROUNDS = {
+    "gibson": ("Gibson: towers of data", "GIBSON_JS"),
+    "glmatrix": ("3D falling code (xscreensaver GLMatrix style)", "GLMATRIX_JS"),
+    "city": ("Data city fly-through", "CITY_JS"),
+    "none": ("None", None),
+}
+
+
+def background_js(name):
+    entry = BACKGROUNDS.get(name) or BACKGROUNDS["gibson"]
+    return globals()[entry[1]] if entry[1] else ""
