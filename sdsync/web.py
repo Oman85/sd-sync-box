@@ -8,7 +8,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
-from . import cardsync, config, downloader, theme
+from . import cardsync, config, downloader, player, playerui, theme
 
 URL_OK = re.compile(r"^https?://(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/", re.I)
 LABEL_OK = re.compile(r"^[A-Z0-9_\-]{1,11}$")
@@ -50,7 +50,7 @@ function renderDevices(list,targets,withButtons){
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SD//SYNC</title><style>@@css@@
+<title>SD//SYNC</title><style>@@css@@ @@player_css@@
 main{max-width:900px;margin:0 auto;padding:12px 12px 40px}
 .app>h2{font-size:15px}
 .menu{display:flex;flex-wrap:wrap;gap:0;padding:2px 2px 0!important}
@@ -60,7 +60,7 @@ main{max-width:900px;margin:0 auto;padding:12px 12px 40px}
 </style>@@look@@</head><body><main>
 <section class="panel app"><h2><span class="ttl">SD//SYNC :: Playlist Manager</span><span class="tag">@@back@@</span></h2>
 <nav class="menu"><a href="#status"><u>S</u>tatus</a><a href="#add"><u>A</u>dd playlist</a><a href="#playlists"><u>P</u>laylists</a>
-@@target_links@@<a href="#settings">S<u>e</u>ttings</a><a href="/screen"><u>M</u>onitor view</a></nav></section>
+<a href="#player">Pla<u>y</u>er</a>@@target_links@@<a href="#settings">S<u>e</u>ttings</a><a href="/screen"><u>M</u>onitor view</a><a href="/remote"><u>R</u>emote</a></nav></section>
 
 <section class="panel" id="status"><h2><span class="ttl">Status</span><span class="tag" id="clock"></span></h2>
 <div><div class="group"><span class="legend">YouTube</span><div id="dl"></div></div>
@@ -69,6 +69,9 @@ main{max-width:900px;margin:0 auto;padding:12px 12px 40px}
 <form method="post" action="/download"><button>Check YouTube now</button></form>
 <form method="post" action="/card"><button>Write drives now</button></form></div></div>
 <div class="status"><span id="sb1">Ready</span><span id="sb2"></span><span id="sb3"></span></div></section>
+
+<section class="panel" id="player"><h2><span class="ttl">Music player</span><span class="tag">plays on the box's speakers · phone remote: <a href="/remote" style="color:inherit">/remote</a></span></h2>
+<div>@@player@@<div class="group"><span class="legend">Library</span>@@library@@</div></div></section>
 
 <section class="panel" id="add"><h2><span class="ttl">Add playlist</span></h2>
 <form method="post" action="/add" style="display:block"><div class="row">
@@ -104,14 +107,16 @@ if(devs._h!==html){devs.innerHTML=html;devs._h=html;}
 document.getElementById('sb1').textContent=s.download.state==='busy'?'Downloading...':'Ready';
 document.getElementById('sb2').textContent=s.devices.length+' drive(s) plugged in';
 document.getElementById('sb3').textContent=libText(s.library);
+if(s.player)paintPlayer(s.player);
 document.getElementById('log').textContent=s.log.slice().reverse().join('\\n');}catch(e){document.getElementById('sb1').textContent='Not connected'}}
-tick();setInterval(tick,1500);
+@@player_js@@
+tick();setInterval(tick,1500);loadLibrary();
 @@kiosk@@
 </script></body></html>"""
 
 SCREEN = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SD//SYNC monitor</title><style>@@css@@
+<title>SD//SYNC monitor</title><style>@@css@@ @@player_css@@
 html,body{height:100%;overflow:hidden}
 body{font-size:clamp(14px,1.45vw,22px)}
 .desk{height:100%;display:grid;grid-template-rows:1fr auto}
@@ -133,12 +138,16 @@ pre.log{max-height:none;height:100%;font-size:.8em}
   <section class="panel"><h2><span class="ttl">YouTube download</span></h2><div id="dl"></div></section>
   <section class="panel"><h2><span class="ttl">Drives</span></h2><div id="devs"></div></section>
  </div>
- <section class="panel"><h2><span class="ttl">Activity log</span><span class="tag" id="lib">@@lib@@</span></h2><div><pre class="log" id="log"></pre></div></section>
+ <div class="col">
+  <section class="panel"><h2><span class="ttl">Now playing</span></h2><div style="overflow:visible">@@player@@</div></section>
+  <section class="panel"><h2><span class="ttl">Activity log</span><span class="tag" id="lib">@@lib@@</span></h2><div><pre class="log" id="log"></pre></div></section>
+ </div>
 </div>
 <div class="task">
  <form method="get" action="/"><button class="app">SD//SYNC</button></form>
  <form method="post" action="/download"><input type="hidden" name="next" value="/screen"><button>Check YouTube now</button></form>
  <form method="post" action="/card"><input type="hidden" name="next" value="/screen"><button>Write drives now</button></form>
+ <form method="get" action="/remote"><button>Music...</button></form>
  <form method="get" action="/"><button>Playlists &amp; drives...</button></form>
  <div class="tray"><span class="mute">@@addr@@</span><b id="clock">--:--</b></div>
 </div></div><script>
@@ -151,8 +160,10 @@ document.getElementById('dl').innerHTML=renderDownload(s.download);
 const devs=document.getElementById('devs');const html=renderDevices(s.devices,TARGETS,true);
 if(devs._h!==html){devs.innerHTML=html;devs._h=html;}
 document.getElementById('lib').textContent=libText(s.library);
+if(s.player)paintPlayer(s.player);
 document.getElementById('log').textContent=s.log.slice().reverse().join('\\n');}catch(e){
 document.getElementById('clock').textContent='Offline';}}
+@@player_js@@
 tick();setInterval(tick,1000);
 @@bg_js@@
 if(location.search.includes('bgonly'))document.querySelector('.desk').style.display='none';
@@ -167,7 +178,9 @@ def render(tpl, kiosk=False, look="cyber", background="gibson", **values):
            .replace("@@look@@", theme.CYBER_FONTS + "<style>" + theme.CYBER_CSS + "</style>" if cyber else "")
            .replace("@@bg_canvas@@", '<canvas id="bg"></canvas>' if bg_js else "")
            .replace("@@bg_js@@", bg_js)
-           .replace("@@status_js@@", STATUS_JS).replace("@@kiosk@@", "initKiosk();" if kiosk else ""))
+           .replace("@@status_js@@", STATUS_JS).replace("@@kiosk@@", "initKiosk();" if kiosk else "")
+           .replace("@@player_css@@", playerui.PLAYER_CSS).replace("@@player_js@@", playerui.PLAYER_JS)
+           .replace("@@player@@", playerui.PLAYER_HTML).replace("@@library@@", playerui.LIBRARY_HTML))
     for k, v in values.items():
         out = out.replace("@@" + k + "@@", str(v))
     return out
@@ -294,16 +307,37 @@ def serve(service, host, port):
 
         def _back(self, to="/"):
             self.send_response(303)
-            self.send_header("Location", to if to in ("/", "/screen") else "/")
+            self.send_header("Location", to if to in ("/", "/screen", "/remote") else "/")
             self.end_headers()
 
         def do_GET(self):
             path = self.path.split("?")[0]
             if path == "/api/status":
-                return self._send(200, json.dumps(service.status.get()), "application/json")
+                st = service.status.get()
+                st["player"] = service.player.state()
+                return self._send(200, json.dumps(st), "application/json")
+            if path == "/manifest.json":
+                return self._send(200, json.dumps(playerui.MANIFEST), "application/manifest+json")
+            if path == "/icon.svg":
+                return self._send(200, playerui.ICON, "image/svg+xml")
             cfg = config.load()
+            if path == "/api/library":
+                q = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+                if "id" in q:
+                    tracks = player.Player.tracks_for(cfg, q["id"][0])
+                    return self._send(200, json.dumps(
+                        {"tracks": [{"title": t["title"], "artist": t["artist"]} for t in tracks]}), "application/json")
+                pls = []
+                for p in cfg["playlists"]:
+                    n = len(player.Player.tracks_for(cfg, p["id"]))
+                    if n:
+                        pls.append({"id": p["id"], "name": _pl_title(p), "count": n})
+                return self._send(200, json.dumps({"playlists": pls}), "application/json")
             kiosk = self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
             targets_json = json.dumps([{"id": t["id"], "name": t["name"]} for t in cfg["targets"]]).replace("<", "\\u003c")
+            if path == "/remote":
+                return self._send(200, render(playerui.REMOTE, kiosk, cfg.get('look', 'cyber'), "none",
+                                              targets_json=targets_json))
             if path == "/screen":
                 songs = sum(len(glob.glob(os.path.join(downloader.playlist_dir(p["id"]), "*.mp3")))
                             for p in cfg["playlists"])
@@ -345,6 +379,23 @@ def serve(service, host, port):
             form = {k: v[0].strip() for k, v in parse_qs(self.rfile.read(n).decode()).items()}
             path = self.path
             pid = form.get("id")
+            if path == "/api/player":
+                cmd = form.get("cmd", "")
+                err = None
+                try:
+                    if cmd == "play_playlist":
+                        service.player.play_playlist(config.load(), form.get("id", ""), int(form.get("start") or 0),
+                                                     True if form.get("shuffle") == "1" else None)
+                    elif cmd == "play_all":
+                        service.player.play_all(config.load())
+                    elif cmd == "shuffle":
+                        service.player.shuffle = not service.player.shuffle
+                        service.player._cache = (0, None)
+                    else:
+                        service.player.command(cmd, form.get("value"))
+                except (player.PlayerError, ValueError) as e:
+                    err = str(e)
+                return self._send(200, json.dumps({"error": err, "player": service.player.state()}), "application/json")
             if path == "/api/wake":
                 service.display.activity("touch")
                 service.status.display_on = True

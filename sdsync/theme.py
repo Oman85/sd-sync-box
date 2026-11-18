@@ -268,7 +268,7 @@ pre.log{background:rgba(0,0,0,.6);color:var(--c4);text-shadow:0 0 6px rgba(57,25
 .tray{box-shadow:0 0 0 1px rgba(0,240,255,.4)!important;color:var(--c1)}
 .tray b{font:800 1.2em var(--head);color:var(--c3);text-shadow:0 0 10px var(--c3)}
 .desk{position:relative;z-index:1}
-.desk .panel{background:rgba(6,0,22,.42)}
+.desk .panel{background:rgba(6,0,22,.6)}
 .desk pre.log{background:rgba(0,0,0,.3)}
 .task{flex-wrap:wrap}
 .task button{font-size:.72em;letter-spacing:.08em;padding:6px 12px}

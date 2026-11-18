@@ -209,3 +209,33 @@ def test_health_check_removes_broken_mp3(tmp_path, monkeypatch):
     svc.health_check()
     assert not (d / "bad.mp3").exists() and not (d / "work").exists()
     assert "1 broken" in svc.status.library["health"]
+
+
+def test_player_queue_and_controls(env, tmp_path, monkeypatch):
+    cardsync, cfg, card, mk = env
+    from sdsync import player
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    (shim / "mpv").write_text(f"#!/bin/sh\nexec {sys.executable} {os.path.join(os.path.dirname(__file__), 'fake_mpv.py')} \"$@\"\n")
+    (shim / "mpv").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{shim}:{os.environ['PATH']}")
+    cfg["playlists"] = [mk("p1", "Road Trip", ["a", "b", "c"])]
+    pl = player.Player(sock=str(tmp_path / "mpv.sock"))
+    try:
+        assert not pl.state()["playing"]
+        pl.play_playlist(cfg, "p1", start=1)
+        st = pl.state()
+        assert st["playing"] and st["title"] == "Song b" and st["count"] == 3 and st["playlist"] == "Road Trip"
+        assert [n["title"] for n in st["up_next"]] == ["Song c"]
+        pl.command("next")
+        assert pl.state()["title"] == "Song c"
+        pl.command("toggle")
+        assert pl.state()["paused"]
+        pl.command("volume", "150")
+        assert pl.state()["volume"] == 100
+        pl.command("stop")
+        assert not pl.state()["playing"]
+        with pytest.raises(player.PlayerError):
+            pl.play_playlist(cfg, "nope")
+    finally:
+        pl.shutdown()

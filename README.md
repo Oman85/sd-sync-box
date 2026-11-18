@@ -130,6 +130,26 @@ You can also open the same view in any browser at `http://sdsync.local/screen`. 
 monitor view off:
 `sudo systemctl disable --now sdsync-screen && sudo systemctl enable --now getty@tty1`.
 
+### Music player
+The box also plays your playlists through its own audio output. On the M600 that's the
+headphone/line-out jack on the front or back, so plug in speakers or an amplifier.
+
+- **On the monitor:** the *Now playing* window shows the song, a progress bar, the next songs
+  and big buttons (previous, play/pause, next, shuffle, stop, volume). Tap the progress bar to
+  jump. *Music...* on the taskbar opens the full player with every playlist and song.
+- **On the control page:** the *Music player* window has the same controls and the library.
+- Only songs already downloaded are played. It plays from the cache, so no internet is needed.
+- If there's no sound, run `alsamixer` on the box, pick the sound card with F6 and unmute it (M key).
+
+### Phone remote
+Open **http://sdsync.local/remote** on your phone (same Wi-Fi). It's a remote control made for
+phones: now playing, play/pause, skip, volume, shuffle, every playlist and song, and the drive
+status. To get an app-like icon:
+- **iPhone:** Safari > Share > *Add to Home Screen*.
+- **Android:** Chrome > menu > *Add to Home screen*.
+It then opens full screen like an app. Everything else (adding playlists, drives) is one tap
+away under *Playlists & drives...*.
+
 ### Cache and automatic checks
 - **Cache:** every song is kept on the box's own drive, so a card or stick is written in minutes
   without waiting for YouTube, even with the internet down. Each song is downloaded only once, even
@@ -217,9 +237,11 @@ SSH and your Wi-Fi in its settings, then copy the folder over and run `sudo ./in
 - `sdsync/card.py`: finds cards and sticks on USB (never the system disk), mounts, unmounts, labels
 - `sdsync/service.py`: background loops, status, health check, Pi LED
 - `sdsync/display.py`: monitor standby and wake
+- `sdsync/player.py`: the music player (mpv in the background)
+- `sdsync/playerui.py`: player controls, the phone remote page
 - `sdsync/web.py`: the web page and the `/screen` display
 - `sdsync/theme.py`: both looks, the data-city animation, message boxes and on-screen keyboard
 - `systemd/sdsync-screen.service`: full-screen kiosk for the monitor
-- `tests/`: run `python3 -m pytest tests` (no hardware needed)
+- `tests/`: run `python3 -m pytest tests` (no hardware needed; `tests/fake_mpv.py` stands in for mpv)
 
 Only download music you have the right to; YouTube's terms don't allow downloading most content.
