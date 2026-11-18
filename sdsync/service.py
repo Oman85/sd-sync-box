@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 
-from . import card, cardsync, config, display, downloader
+from . import card, cardsync, config, display, downloader, player
 
 log = logging.getLogger("sdsync")
 
@@ -106,6 +106,7 @@ class Service:
         self._synced = {}               # device key -> cache_gen it was last written at
         self._lock = threading.Lock()
         self.display = display.Display()
+        self.player = player.Player()
         self._last_health = 0
         self._last_download_run = 0
 

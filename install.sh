@@ -30,7 +30,7 @@ esac
 
 SRC=$(cd "$(dirname "$0")" && pwd)
 apt-get update
-apt-get install -y python3-venv python3-pip ffmpeg dosfstools avahi-daemon curl
+apt-get install -y python3-venv python3-pip ffmpeg dosfstools avahi-daemon curl mpv alsa-utils
 
 mkdir -p /opt/sdsync /var/lib/sdsync /mnt/sdsync
 rm -rf /opt/sdsync/sdsync
