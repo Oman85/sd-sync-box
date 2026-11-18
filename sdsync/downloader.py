@@ -15,7 +15,7 @@ import os
 import shutil
 import time
 
-from . import config, names
+from . import config, names, takeout
 
 log = logging.getLogger("sdsync.download")
 
@@ -115,7 +115,16 @@ def sync_playlist(pl, cfg, progress=None):
     work = os.path.join(pdir, "work")
     os.makedirs(work, exist_ok=True)
 
-    yt_title, tracks = fetch_listing(pl["url"], cfg)
+    imported = pl.get("source") == "takeout"
+    if imported:
+        # A fixed list from a Google Takeout export. Titles of songs that were
+        # not in the music library are learned while downloading (see below).
+        known = {t["id"]: t for t in read_order(pid)["tracks"]}
+        tracks = [known.get(t["id"]) if not t.get("title") and t["id"] in known else t
+                  for t in takeout.load_tracks(pid)]
+        yt_title = pl.get("name") or "Imported playlist"
+    else:
+        yt_title, tracks = fetch_listing(pl["url"], cfg)
     album = names.clean_text(pl.get("name") or yt_title) or "Playlist"
     _write_json(os.path.join(pdir, "order.json"), {"title": yt_title, "tracks": tracks})
 
@@ -140,15 +149,44 @@ def sync_playlist(pl, cfg, progress=None):
     if not missing:
         log.info("%s: up to date (%d songs)", album, len(tracks))
         return 0
+    copied = 0
 
     by_id = {t["id"]: t for t in tracks}
     done = []
+
+    # A song another playlist already downloaded is copied, not fetched again
+    # (sorted playlists made from liked songs share most of theirs).
+    for t in list(missing):
+        other = next(iter(glob.glob(os.path.join(config.CACHE_DIR, "*", t["id"] + ".mp3"))), None)
+        if not other:
+            continue
+        tmp = os.path.join(work, t["id"] + ".mp3")
+        shutil.copyfile(other, tmp)
+        tag_mp3(tmp, t.get("title") or t["id"], t.get("artist", ""), album)
+        os.replace(tmp, os.path.join(pdir, t["id"] + ".mp3"))
+        missing.remove(t)
+        failed.pop(t["id"], None)
+        copied += 1
+    if not missing:
+        _write_json(failed_path, failed)
+        log.info("%s: %d songs copied from other playlists", album, copied)
+        return copied
+
+    def learn(info):
+        """Fill in title and artist from YouTube for songs listed by ID only."""
+        t = by_id.get(info.get("id"))
+        if t is not None and not t.get("title") and info.get("title"):
+            artist, song = names.split_artist_title(
+                info["title"], info.get("artist") or info.get("channel") or info.get("uploader") or "")
+            t["title"], t["artist"] = song or info["title"], artist
 
     def post_hook(filepath):
         vid = os.path.splitext(os.path.basename(filepath))[0]
         t = by_id.get(vid)
         if not t or not filepath.endswith(".mp3"):
             return
+        if not t.get("title"):
+            t["title"] = vid
         tag_mp3(filepath, t["title"], t["artist"], album)
         os.replace(filepath, os.path.join(pdir, vid + ".mp3"))
         done.append(vid)
@@ -156,6 +194,7 @@ def sync_playlist(pl, cfg, progress=None):
             progress(f"{album}", len(done), len(missing), 0.0)
 
     def progress_hook(d):
+        learn(d.get("info_dict") or {})
         if not progress or d.get("status") != "downloading":
             return
         total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
@@ -192,8 +231,10 @@ def sync_playlist(pl, cfg, progress=None):
         failed.pop(vid, None)
     _write_json(failed_path, failed)
     shutil.rmtree(work, ignore_errors=True)
-    log.info("%s: %d new songs", album, len(done))
-    return len(done)
+    if imported:   # keep the titles learned from YouTube for the drive file names
+        _write_json(os.path.join(pdir, "order.json"), {"title": yt_title, "tracks": tracks})
+    log.info("%s: %d new songs", album, len(done) + copied)
+    return len(done) + copied
 
 
 def remove_orphans(cfg):

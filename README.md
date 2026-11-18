@@ -145,6 +145,52 @@ monitor view off:
   damaged or half-written folder is rewritten in order.
 - **yt-dlp** (the YouTube downloader) updates itself once a day, because YouTube changes often.
 
+## Liked songs and private playlists (Google Takeout)
+
+YouTube won't show liked songs or private playlists to the box without signing in, so
+import them from a Google Takeout export instead:
+
+1. Go to takeout.google.com, click **Deselect all**, tick **YouTube and YouTube Music**.
+2. Under **All YouTube data included**, keep only **playlists** and **music-library-songs**.
+   Export once as a .zip and download it.
+3. On the control page, open **Import**, upload the .zip (or one playlist .csv from it),
+   tick the playlists you want and pick a drive. *Liked & library songs* is ticked for you.
+
+The box then downloads those songs by video ID like any other playlist. Songs that were
+deleted from YouTube are skipped. An imported list doesn't follow changes on YouTube:
+export and upload again later, and playlists with the same name get their new song list.
+
+### One-time: put liked songs into genre playlists on YouTube
+
+`tools/takeout_to_youtube.py` does the same genre sorting and writes the result to your
+YouTube account as unlisted playlists, which the box (or anyone with the link) can then
+read normally. Run it on any computer with Python 3 and a browser:
+
+    python3 tools/takeout_to_youtube.py genres takeout.zip   # writes genres.csv, 10-30 min
+    # optional: fix genres in genres.csv with a spreadsheet; empty genre = left out
+    pip install google-api-python-client google-auth-oauthlib
+    python3 tools/takeout_to_youtube.py --help-setup          # one-time Google Cloud key
+    python3 tools/takeout_to_youtube.py upload genres.csv
+
+YouTube's free API quota allows about 190 songs a day, so 1,700 songs take about 9 days.
+Leave `upload` running and it waits for the quota to reset each night, or run it again
+later and it carries on where it stopped.
+
+### Sorting liked songs into playlists
+
+Next to an imported playlist, **Sort into playlists** opens a page that:
+
+- looks up each song's genre on MusicBrainz (musicbrainz.org, free). It uses the album's
+  genre, or the artist's if the album isn't found. The first run takes about 10 to 30 minutes
+  for 1,700 songs, and answers are remembered for next time;
+- lists genres with their song counts. Small genres are merged into "Other genres".
+  Tick the ones you want, rename them, pick a drive and press **Make playlists**;
+- lists every song with a search box, so you can tick songs and add them to a playlist
+  (or take them out) by hand.
+
+Songs already downloaded for another playlist are copied, not downloaded again. Once
+everything is sorted, take *Liked & library songs* off the drive so songs don't appear twice.
+
 ## How the drives are laid out
 
 ```
