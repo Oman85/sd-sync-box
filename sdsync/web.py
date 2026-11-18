@@ -8,7 +8,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
-from . import cardsync, config, downloader, theme
+from . import cardsync, config, downloader, takeout, theme
 
 URL_OK = re.compile(r"^https?://(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/", re.I)
 LABEL_OK = re.compile(r"^[A-Z0-9_\-]{1,11}$")
@@ -59,7 +59,7 @@ main{max-width:900px;margin:0 auto;padding:12px 12px 40px}
 .menu a u{text-decoration:underline}
 </style>@@look@@</head><body><main>
 <section class="panel app"><h2><span class="ttl">SD//SYNC :: Playlist Manager</span><span class="tag">@@back@@</span></h2>
-<nav class="menu"><a href="#status"><u>S</u>tatus</a><a href="#add"><u>A</u>dd playlist</a><a href="#playlists"><u>P</u>laylists</a>
+<nav class="menu"><a href="#status"><u>S</u>tatus</a><a href="#add"><u>A</u>dd playlist</a><a href="#import"><u>I</u>mport</a><a href="#playlists"><u>P</u>laylists</a>
 @@target_links@@<a href="#settings">S<u>e</u>ttings</a><a href="/screen"><u>M</u>onitor view</a></nav></section>
 
 <section class="panel" id="status"><h2><span class="ttl">Status</span><span class="tag" id="clock"></span></h2>
@@ -76,6 +76,8 @@ main{max-width:900px;margin:0 auto;padding:12px 12px 40px}
 <div class="grow"><label>Name (optional):</label><input name="name" maxlength="40" placeholder="Taken from YouTube if blank"></div>
 <div class="grow"><label>Put it on:</label><select name="to">@@add_targets@@</select></div>
 <button class="hot">Add</button></div></form></section>
+
+<section class="panel" id="import"><h2><span class="ttl">Import liked songs &amp; private playlists</span><span class="tag">from Google Takeout</span></h2><div>@@import_@@</div></section>
 
 <section class="panel" id="playlists"><h2><span class="ttl">Playlists</span><span class="tag">downloaded once, used by any drive</span></h2><div>@@playlists@@</div></section>
 
@@ -199,12 +201,85 @@ def _playlists_html(cfg):
         on = p.get("enabled", True)
         out.append(
             f"<div class='item{'' if on else ' off'}'><div class='t'>{esc(_pl_title(p))}{'' if on else ' (paused)'}</div>"
-            f"<div class='u'>{count} · used on: {esc(', '.join(used) or 'nothing yet')} · {esc(p['url'])}</div>"
+            f"<div class='u'>{count} · used on: {esc(', '.join(used) or 'nothing yet')} · "
+            f"{'imported from Google Takeout' if p.get('source') == 'takeout' else esc(p['url'])}</div>"
             f"<div class='row' style='margin-top:6px'>"
             + _btn("/toggle", "Pause" if on else "Resume", id=p["id"])
             + _btn("/remove", "Delete", "sm hot", "Delete this playlist and its songs from every drive?", id=p["id"])
             + "</div></div>")
     return "".join(out)
+
+
+def _import_html(cfg, add_targets):
+    pending = takeout.load_pending()
+    if not pending:
+        return (
+            "<div class='mute' style='margin-bottom:8px'>YouTube keeps liked songs and private playlists to itself, "
+            "so the box can't read them from a link. Get a copy at takeout.google.com: deselect all, tick "
+            "<b>YouTube and YouTube Music</b>, under <i>All YouTube data included</i> keep only <b>playlists</b> and "
+            "<b>music-library-songs</b>, then upload the .zip here. A single playlist .csv from it works too.</div>"
+            "<form method='post' action='/import/upload' enctype='multipart/form-data'><div class='row'>"
+            "<div class='grow'><label>Takeout file (.zip or .csv):</label><input type='file' name='file' accept='.zip,.csv' required></div>"
+            "<button class='hot'>Read file</button></div></form>")
+    have = {p["name"]: p for p in cfg["playlists"] if p.get("source") == "takeout"}
+    rows = []
+    for i, pl in enumerate(pending):
+        note = " · already on the box, its song list will be updated" if pl["name"] in have else ""
+        checked = " checked" if pl.get("library") or pl["name"] in have else ""
+        rows.append(
+            f"<label class='item' style='display:flex;gap:10px;align-items:center'>"
+            f"<input type='checkbox' name='pick_{i}' value='1'{checked} style='width:28px;height:28px'>"
+            f"<span><span class='t'>{esc(pl['name'])}</span>"
+            f"<span class='u'> {len(pl['tracks'])} songs{note}</span></span></label>")
+    return (
+        "<form method='post' action='/import/confirm' style='display:block'>"
+        "<div class='mute' style='margin-bottom:8px'>Found in the file. Tick what the box should download:</div>"
+        + "".join(rows)
+        + f"<div class='row' style='margin-top:8px'><div class='grow'><label>Put new ones on:</label>"
+          f"<select name='to'>{add_targets}</select></div><button class='hot'>Import ticked</button></div></form>"
+        + "<div class='row' style='margin-top:6px'>" + _btn("/import/cancel", "Cancel") + "</div>")
+
+
+def _parse_multipart(ctype, body):
+    """{field name: (filename, bytes)} from a multipart/form-data body."""
+    from email import policy
+    from email.parser import BytesParser
+
+    msg = BytesParser(policy=policy.HTTP).parsebytes(b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + body)
+    out = {}
+    if not msg.is_multipart():
+        return out
+    for part in msg.iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        if name:
+            out[name] = (part.get_filename() or "", part.get_payload(decode=True) or b"")
+    return out
+
+
+def _import_confirm(form):
+    pending = takeout.load_pending()
+    picked = [pl for i, pl in enumerate(pending) if form.get(f"pick_{i}")]
+    if not picked:
+        return 0
+
+    def imp(c):
+        have = {p["name"]: p for p in c["playlists"] if p.get("source") == "takeout"}
+        t = config.target(c, form.get("to", ""))
+        for pl in picked:
+            old = have.get(pl["name"])
+            if old:
+                takeout.save_tracks(old["id"], pl["tracks"])
+                continue
+            new = {"id": uuid.uuid4().hex[:8], "url": "", "name": pl["name"][:40],
+                   "source": "takeout", "enabled": True}
+            takeout.save_tracks(new["id"], pl["tracks"])
+            c["playlists"].append(new)
+            if t:
+                name = "" if t.get("number_folders") else _next_cd_name(t)
+                t["folders"].append({"name": name, "playlists": [new["id"]]})
+    config.update(imp)
+    takeout.clear_pending()
+    return len(picked)
 
 
 def _target_html(cfg, t):
@@ -336,14 +411,28 @@ def serve(service, host, port):
             back = "<a href='/screen' style='color:#fff'>Back to monitor view</a>" if kiosk else ""
             self._send(200, render(
                 PAGE, kiosk, cfg.get('look', 'cyber'), back=back, looks=looks, backgrounds=backgrounds, screen_off=screen_off, check_insert=check_insert, target_links=target_links, playlists=_playlists_html(cfg), add_targets=add_targets,
+                import_=_import_html(cfg, add_targets),
                 targets="".join(_target_html(cfg, t) for t in cfg["targets"]),
                 targets_json=targets_json, bitrates=bitrates,
                 interval=int(float(cfg["download_interval_hours"]))))
 
         def do_POST(self):
             n = int(self.headers.get("Content-Length") or 0)
-            form = {k: v[0].strip() for k, v in parse_qs(self.rfile.read(n).decode()).items()}
             path = self.path
+            if path == "/import/upload":
+                if n > takeout.MAX_UPLOAD:
+                    return self._send(413, "That file is too big. Export only playlists and music-library-songs. <a href='/#import'>Back</a>")
+                parts = _parse_multipart(self.headers.get("Content-Type", ""), self.rfile.read(n))
+                filename, data = parts.get("file", ("", b""))
+                try:
+                    takeout.save_pending(takeout.parse(filename, data))
+                except ValueError as e:
+                    return self._send(400, f"{esc(str(e))} <a href='/#import'>Back</a>")
+                self.send_response(303)
+                self.send_header("Location", "/#import")
+                self.end_headers()
+                return
+            form = {k: v[0].strip() for k, v in parse_qs(self.rfile.read(n).decode()).items()}
             pid = form.get("id")
             if path == "/api/wake":
                 service.display.activity("touch")
@@ -371,6 +460,7 @@ def serve(service, host, port):
                             f["playlists"] = [x for x in f["playlists"] if x != pid]
                         t["folders"] = [f for f in t["folders"] if f["playlists"]]
                 config.update(rm)
+                takeout.delete_tracks(pid)
                 service.card_now.set()
             elif path == "/toggle":
                 def tg(c):
@@ -436,6 +526,11 @@ def serve(service, host, port):
                     return self._send(500, f"Could not label the drive: {esc(str(e))} <a href='/'>Back</a>")
                 if not ok:
                     return self._send(400, "That drive is gone or isn't FAT32. <a href='/'>Back</a>")
+            elif path == "/import/confirm":
+                if _import_confirm(form):
+                    service.download_now.set()
+            elif path == "/import/cancel":
+                takeout.clear_pending()
             elif path == "/download":
                 service.download_now.set()
             elif path == "/card":

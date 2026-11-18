@@ -145,6 +145,21 @@ monitor view off:
   damaged or half-written folder is rewritten in order.
 - **yt-dlp** (the YouTube downloader) updates itself once a day, because YouTube changes often.
 
+## Liked songs and private playlists (Google Takeout)
+
+YouTube won't show liked songs or private playlists to the box without signing in, so
+import them from a Google Takeout export instead:
+
+1. Go to takeout.google.com, click **Deselect all**, tick **YouTube and YouTube Music**.
+2. Under **All YouTube data included**, keep only **playlists** and **music-library-songs**.
+   Export once as a .zip and download it.
+3. On the control page, open **Import**, upload the .zip (or one playlist .csv from it),
+   tick the playlists you want and pick a drive. *Liked & library songs* is ticked for you.
+
+The box then downloads those songs by video ID like any other playlist. Songs that were
+deleted from YouTube are skipped. An imported list doesn't follow changes on YouTube:
+export and upload again later, and playlists with the same name get their new song list.
+
 ## How the drives are laid out
 
 ```

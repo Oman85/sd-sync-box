@@ -209,3 +209,99 @@ def test_health_check_removes_broken_mp3(tmp_path, monkeypatch):
     svc.health_check()
     assert not (d / "bad.mp3").exists() and not (d / "work").exists()
     assert "1 broken" in svc.status.library["health"]
+
+
+def _takeout_zip():
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        base = "Takeout/YouTube and YouTube Music/"
+        z.writestr(base + "playlists/playlists.csv",
+                   "Playlist ID,Title\nPLabcdefghijklmnopqrstuvwxyz012345,Road Trip\n")
+        z.writestr(base + "playlists/Road Trip-videos.csv",
+                   "Video ID,Playlist Video Creation Timestamp\naaaaaaaaaaa,2024-01-01\nbbbbbbbbbbb,2024-01-01\naaaaaaaaaaa,x\n\n\n")
+        z.writestr(base + "playlists/Jízda#U00e1-videos.csv", "Video ID,Time\nccccccccccc,2024\n")
+        z.writestr(base + "music (library and uploads)/music library songs.csv",
+                   "﻿Video ID,Song Title,Album Title,Artist Name 1,Artist Name 2\n"
+                   "ddddddddddd,Song D,Album,Band,Guest\n")
+        z.writestr(base + "videos/videos.csv", "Video ID,Duration,Language,Category,Title\neeeeeeeeeee,1,cs,10,Mine\n")
+    return buf.getvalue()
+
+
+def test_takeout_parse(env):
+    from sdsync import takeout
+    found = takeout.parse("takeout.zip", _takeout_zip())
+    assert [(p["name"], len(p["tracks"])) for p in found] == [
+        ("Liked & library songs", 1), ("Jízdaá", 1), ("Road Trip", 2)]
+    assert found[0]["tracks"][0] == {"id": "ddddddddddd", "title": "Song D", "artist": "Band, Guest"}
+    one = takeout.parse("Road Trip-videos.csv", b"Video ID,Time\nbbbbbbbbbbb,1\n")
+    assert one[0]["name"] == "Road Trip"
+    with pytest.raises(ValueError):
+        takeout.parse("x.csv", b"Playlist ID,Title\nPLx,y\n")
+
+
+def test_takeout_import_downloads_by_id(env, monkeypatch):
+    import types
+    cardsync, cfg, card, make_playlist = env
+    from sdsync import downloader, takeout
+
+    takeout.save_tracks("imp1", [{"id": "aaaaaaaaaaa", "title": "", "artist": ""},
+                                 {"id": "ddddddddddd", "title": "Song D", "artist": "Band"}])
+    asked = []
+
+    class FakeYDL:
+        def __init__(self, opts):
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def extract_info(self, *a, **k):
+            raise AssertionError("an imported playlist must not be listed from YouTube")
+
+        def download(self, urls):
+            for u in urls:
+                vid = u.rsplit("=", 1)[1]
+                asked.append(vid)
+                info = {"id": vid, "title": "Some Artist - Real Title (Official Video)", "channel": "x"}
+                for h in self.opts["progress_hooks"]:
+                    h({"status": "downloading", "info_dict": info, "downloaded_bytes": 1, "total_bytes": 2})
+                path = self.opts["outtmpl"].replace("%(id)s.%(ext)s", vid + ".mp3")
+                open(path, "wb").write(b"\xff\xfb" + b"\0" * 500)
+                for h in self.opts["post_hooks"]:
+                    h(path)
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=FakeYDL))
+    pl = {"id": "imp1", "url": "", "name": "Liked", "source": "takeout", "enabled": True}
+    assert downloader.sync_playlist(pl, cfg) == 2
+    assert sorted(asked) == ["aaaaaaaaaaa", "ddddddddddd"]
+    tracks = downloader.read_order("imp1")["tracks"]
+    assert tracks[0] == {"id": "aaaaaaaaaaa", "title": "Real Title", "artist": "Some Artist"}
+    assert tracks[1]["title"] == "Song D"   # titles from the music library are kept
+    assert downloader.sync_playlist(pl, cfg) == 0
+
+
+def test_takeout_web_flow(env, monkeypatch):
+    from sdsync import config, takeout, web
+    body = (b"--XX\r\nContent-Disposition: form-data; name=\"file\"; filename=\"t.zip\"\r\n"
+            b"Content-Type: application/zip\r\n\r\n" + _takeout_zip() + b"\r\n--XX--\r\n")
+    name, data = web._parse_multipart("multipart/form-data; boundary=XX", body)["file"]
+    assert name == "t.zip" and data == _takeout_zip()
+    takeout.save_pending(takeout.parse(name, data))
+    cfg = config.load()
+    assert "Liked &amp; library songs" in web._import_html(cfg, "")
+    assert web._import_confirm({"pick_0": "1", "pick_2": "1", "to": "sd"}) == 2
+    cfg = config.load()
+    assert [p["name"] for p in cfg["playlists"]] == ["Liked & library songs", "Road Trip"]
+    assert len(config.target(cfg, "sd")["folders"]) == 2
+    assert not takeout.load_pending()
+    # A newer export updates the same playlist instead of adding another one.
+    takeout.save_pending([{"name": "Road Trip", "library": False, "tracks": [{"id": "zzzzzzzzzzz"}]}])
+    web._import_confirm({"pick_0": "1", "to": "sd"})
+    cfg = config.load()
+    rt = next(p for p in cfg["playlists"] if p["name"] == "Road Trip")
+    assert len(cfg["playlists"]) == 2 and takeout.load_tracks(rt["id"]) == [{"id": "zzzzzzzzzzz"}]
