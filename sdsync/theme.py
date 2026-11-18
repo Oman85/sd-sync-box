@@ -212,7 +212,7 @@ a{color:var(--c1)}
 b{color:#fff}
 
 .panel{background:var(--face);box-shadow:0 0 0 1px var(--c1),0 0 22px rgba(0,240,255,.25),inset 0 0 30px rgba(122,0,255,.18);
-  padding:0;backdrop-filter:blur(2px)}
+  padding:0}
 .panel>h2{font:800 13px/1 var(--head);letter-spacing:.28em;text-transform:uppercase;color:#000;min-height:30px;
   padding:6px 10px;background:linear-gradient(100deg,var(--c2),var(--c5) 45%,var(--c1));
   text-shadow:none;box-shadow:0 0 18px rgba(255,0,212,.55)}
@@ -277,14 +277,14 @@ pre.log{background:rgba(0,0,0,.6);color:var(--c4);text-shadow:0 0 6px rgba(57,25
 .menu a u{text-decoration:none;color:var(--c3)}
 .logo{font:800 22px var(--head);letter-spacing:.3em;color:#fff;
   text-shadow:-2px 0 var(--c2),2px 0 var(--c1),0 0 18px rgba(255,0,212,.6)}
-#city{position:fixed;inset:0;z-index:0;width:100%;height:100%}
+#bg{position:fixed;inset:0;z-index:0;width:100%;height:100%}
 @media (prefers-reduced-motion:reduce){.bar::after,.dev.unassigned{animation:none}}
 """
 
 # A fly-through of an endless city of glowing data towers, drawn on a canvas.
 CITY_JS = r"""
 (function(){
- const c=document.getElementById('city'); if(!c) return; const x=c.getContext('2d');
+ const c=document.getElementById('bg'); if(!c) return; const x=c.getContext('2d');
  const cols=['#00f0ff','#ff00d4','#f6ff00','#39ff14','#7a00ff'], G='0123456789ABCDEF';
  let W,H,towers=[],t=0; const FAR=60, SPEED=0.06;
  function size(){W=c.width=innerWidth;H=c.height=innerHeight}
@@ -318,3 +318,75 @@ CITY_JS = r"""
  if(!matchMedia('(prefers-reduced-motion: reduce)').matches) frame();
 })();
 """
+
+
+# 3D falling code, in the spirit of the "GLMatrix" hack from xscreensaver
+# (by Jamie Zawinski). Written from scratch for a 2D canvas: strips of glyphs
+# hang at different depths, a bright head drops down each one, the tail fades
+# behind it, glyphs flicker, and the view slowly drifts forward and sways.
+GLMATRIX_JS = r"""
+(function(){
+ const c=document.getElementById('bg'); if(!c) return; const x=c.getContext('2d');
+ const G='ｦｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789Z:.=*+-<>¦|';
+ const pick=()=>G[Math.random()*G.length|0];
+ const NEAR=1.2, FAR=42, N=110, LEN=30;
+ let W,H,strips=[],t=0,last=0;
+ function size(){W=c.width=innerWidth;H=c.height=innerHeight}
+ function strip(z){
+  const s={x:(Math.random()-.5)*34,y:6+Math.random()*10,z:z,len:LEN,head:-Math.random()*LEN|0,
+    speed:.12+Math.random()*.25,acc:0,erase:Math.random()<.35,glyphs:[]};
+  for(let i=0;i<LEN;i++)s.glyphs.push(pick()); return s;
+ }
+ size(); addEventListener('resize',size);
+ for(let i=0;i<N;i++) strips.push(strip(NEAR+Math.random()*(FAR-NEAR)));
+ function frame(now){
+  const cu=document.getElementById('curtain');
+  if(cu&&cu.classList.contains('on')){setTimeout(()=>requestAnimationFrame(frame),1000);return}
+  requestAnimationFrame(frame);
+  if(now-last<33) return;
+  // slow machine? draw fewer strips (keeps the monitor smooth on old PCs)
+  if(last&&now-last>70&&strips.length>40) strips.length-=4;
+  last=now; t++;                                // ~30 fps is plenty
+  x.fillStyle='#000'; x.fillRect(0,0,W,H);
+  const f=Math.min(W,H)*0.9, cx=W/2, cy=H/2;
+  const sway=Math.sin(t*0.004)*0.35, bob=Math.sin(t*0.003)*1.2;
+  const cs=Math.cos(sway), sn=Math.sin(sway);
+  strips.sort((a,b)=>b.z-a.z);
+  x.textAlign='center'; x.textBaseline='middle'; let curFs=0;
+  for(const s of strips){
+   s.z-=0.035;                                      // drift toward the viewer
+   s.acc+=s.speed; while(s.acc>=1){s.acc-=1;s.head++}
+   if(s.head>s.len+LEN){s.head=0;if(s.erase){s.glyphs=s.glyphs.map(pick)}}
+   if(Math.random()<.08) s.glyphs[Math.random()*s.len|0]=pick();
+   // rotate the strip around the vertical axis for the slow sway
+   const X=s.x*cs-s.z*sn*0.15, Z=s.z+s.x*sn*0.15;
+   if(Z<NEAR){Object.assign(s,strip(FAR));continue}
+   const k=f/Z, sx=cx+X*k; if(sx<-50||sx>W+50) continue;
+   const fs=Math.round(k*0.95); if(fs<5) continue;
+   const fog=Math.max(0,Math.min(1,(FAR-Z)/(FAR*0.75)));
+   if(fs!==curFs){curFs=fs;x.font=fs+'px "IPAGothic","Noto Sans Mono CJK JP","VL Gothic","DejaVu Sans Mono",monospace'}
+   for(let i=0;i<s.len;i++){
+    const age=s.head-i; if(age<0||age>LEN) continue;   // above the head: not drawn yet
+    const sy=cy+(s.y-bob-i*1.0)*-k;
+    if(sy<-fs||sy>H+fs) continue;
+    const a=fog*(age===0?1:Math.max(0,1-age/LEN)*0.85);
+    if(a<0.03) continue;
+    x.fillStyle=age===0?`rgba(220,255,230,${a})`:`rgba(0,${150+((i*37)%90)},${40+((i*13)%40)},${a})`;
+    x.fillText(s.glyphs[i],sx,sy);
+   }
+  }
+ }
+ if(!matchMedia('(prefers-reduced-motion: reduce)').matches) requestAnimationFrame(frame);
+})();
+"""
+
+BACKGROUNDS = {
+    "glmatrix": ("3D falling code (xscreensaver GLMatrix style)", "GLMATRIX_JS"),
+    "city": ("Data city fly-through", "CITY_JS"),
+    "none": ("None", None),
+}
+
+
+def background_js(name):
+    entry = BACKGROUNDS.get(name) or BACKGROUNDS["glmatrix"]
+    return globals()[entry[1]] if entry[1] else ""

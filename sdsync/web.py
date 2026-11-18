@@ -86,6 +86,7 @@ main{max-width:900px;margin:0 auto;padding:12px 12px 40px}
 <div class="grow"><label>Check YouTube every (hours):</label><input name="download_interval_hours" type="number" min="1" max="168" value="@@interval@@"></div>
 <div class="grow"><label>MP3 quality, kbps (new downloads):</label><select name="bitrate_kbps">@@bitrates@@</select></div>
 <div class="grow"><label>Look:</label><select name="look">@@looks@@</select></div>
+<div class="grow"><label>Monitor background (cyberspace look):</label><select name="background">@@backgrounds@@</select></div>
 <div class="grow"><label>Turn monitor off when untouched for:</label><select name="screen_off_minutes">@@screen_off@@</select></div>
 <div class="grow"><label>Check YouTube when a drive is plugged in:</label><select name="check_on_insert">@@check_insert@@</select></div>
 <button>Save</button></div></form></section>
@@ -127,7 +128,7 @@ pre.log{max-height:none;height:100%;font-size:.8em}
 .task .app{font-weight:bold}
 .tray{margin-left:auto;box-shadow:inset 1px 1px var(--sh),inset -1px -1px var(--hi);padding:0 14px;min-height:54px;display:flex;align-items:center;gap:14px}
 @media (max-width:800px){.wins{grid-template-columns:1fr}}
-</style>@@look@@</head><body>@@city_canvas@@<div class="desk"><div class="wins">
+</style>@@look@@</head><body>@@bg_canvas@@<div class="desk"><div class="wins">
  <div class="col">
   <section class="panel"><h2><span class="ttl">YouTube download</span></h2><div id="dl"></div></section>
   <section class="panel"><h2><span class="ttl">Drives</span></h2><div id="devs"></div></section>
@@ -153,17 +154,18 @@ document.getElementById('lib').textContent=libText(s.library);
 document.getElementById('log').textContent=s.log.slice().reverse().join('\\n');}catch(e){
 document.getElementById('clock').textContent='Offline';}}
 tick();setInterval(tick,1000);
-@@city_js@@
+@@bg_js@@
 @@kiosk@@
 </script></body></html>"""
 
 
-def render(tpl, kiosk=False, look="cyber", **values):
+def render(tpl, kiosk=False, look="cyber", background="glmatrix", **values):
     cyber = look == "cyber"
+    bg_js = theme.background_js(background) if cyber else ""
     out = (tpl.replace("@@css@@", theme.CSS).replace("@@theme_js@@", theme.JS)
            .replace("@@look@@", theme.CYBER_FONTS + "<style>" + theme.CYBER_CSS + "</style>" if cyber else "")
-           .replace("@@city_canvas@@", '<canvas id="city"></canvas>' if cyber else "")
-           .replace("@@city_js@@", theme.CITY_JS if cyber else "")
+           .replace("@@bg_canvas@@", '<canvas id="bg"></canvas>' if bg_js else "")
+           .replace("@@bg_js@@", bg_js)
            .replace("@@status_js@@", STATUS_JS).replace("@@kiosk@@", "initKiosk();" if kiosk else ""))
     for k, v in values.items():
         out = out.replace("@@" + k + "@@", str(v))
@@ -306,7 +308,7 @@ def serve(service, host, port):
                             for p in cfg["playlists"])
                 host_name = os.uname().nodename
                 return self._send(200, render(
-                    SCREEN, kiosk, cfg.get('look', 'cyber'), addr=esc(f"http://{host_name}.local"), targets_json=targets_json,
+                    SCREEN, kiosk, cfg.get('look', 'cyber'), cfg.get('background', 'glmatrix'), addr=esc(f"http://{host_name}.local"), targets_json=targets_json,
                     lib=f"{len(cfg['playlists'])} playlists · {songs} songs in library"))
             if path != "/":
                 return self._send(404, "Not found", "text/plain")
@@ -318,6 +320,10 @@ def serve(service, host, port):
             looks = "".join(
                 f"<option value='{v}'{' selected' if cfg.get('look', 'cyber') == v else ''}>{n}</option>"
                 for v, n in (("cyber", "Cyberspace (neon, hacker movie)"), ("classic", "Classic 90s desktop")))
+            cur_bg = cfg.get("background", "glmatrix")
+            backgrounds = "".join(
+                f"<option value='{k}'{' selected' if k == cur_bg else ''}>{esc(v[0])}</option>"
+                for k, v in theme.BACKGROUNDS.items())
             off = int(float(cfg.get("screen_off_minutes", 5)))
             screen_off = "".join(
                 f"<option value='{m}'{' selected' if m == off else ''}>{'Never' if m == 0 else f'{m} min'}</option>"
@@ -328,7 +334,7 @@ def serve(service, host, port):
             target_links = "".join(f"<a href='#t-{esc(t['id'])}'>{esc(t['name'])}</a>" for t in cfg["targets"])
             back = "<a href='/screen' style='color:#fff'>Back to monitor view</a>" if kiosk else ""
             self._send(200, render(
-                PAGE, kiosk, cfg.get('look', 'cyber'), back=back, looks=looks, screen_off=screen_off, check_insert=check_insert, target_links=target_links, playlists=_playlists_html(cfg), add_targets=add_targets,
+                PAGE, kiosk, cfg.get('look', 'cyber'), back=back, looks=looks, backgrounds=backgrounds, screen_off=screen_off, check_insert=check_insert, target_links=target_links, playlists=_playlists_html(cfg), add_targets=add_targets,
                 targets="".join(_target_html(cfg, t) for t in cfg["targets"]),
                 targets_json=targets_json, bitrates=bitrates,
                 interval=int(float(cfg["download_interval_hours"]))))
@@ -441,6 +447,8 @@ def serve(service, host, port):
                     c["download_interval_hours"] = max(1, min(168, int(form.get("download_interval_hours") or 6)))
                     c["bitrate_kbps"] = int(form.get("bitrate_kbps") or 192)
                     c["look"] = "classic" if form.get("look") == "classic" else "cyber"
+                    if form.get("background") in theme.BACKGROUNDS:
+                        c["background"] = form["background"]
                     try:
                         c["screen_off_minutes"] = max(0, min(240, int(form.get("screen_off_minutes", 5))))
                     except ValueError:

@@ -25,6 +25,7 @@ DEFAULTS = {
     "screen_off_minutes": 5,       # monitor goes to standby after this long untouched (0 = never)
     "check_on_insert": True,       # plugging in a drive also checks YouTube (if last check > 1 h ago)
     "look": "cyber",               # "cyber" (neon hacker-movie screens) or "classic" (90s desktop)
+    "background": "glmatrix",      # monitor background in the cyber look: glmatrix, city or none
 }
 
 # Each kind of drive the box writes. A drive is recognised by its FAT volume
